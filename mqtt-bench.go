@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	MQTT "github.com/eclipse/paho.mqtt.golang"
@@ -33,7 +34,7 @@ type ExecOptions struct {
 	Password          string     // パスワード
 	CertConfig        CertConfig // 認証定義
 	ClientNum         int        // クライアントの同時実行数
-	Count             int        // 1クライアント当たりのメッセージ数
+	Count             int64      // 1クライアント当たりのメッセージ数
 	MessageSize       int        // 1メッセージのサイズ(byte)
 	UseDefaultHandler bool       // Subscriber個別ではなく、デフォルトのMessageHandlerを利用するかどうか
 	PreTime           int        // 実行前の待機時間(ms)
@@ -101,7 +102,7 @@ func CreateClientTlsConfig(rootCAFile string, clientCertFile string, clientKeyFi
 }
 
 // 実行する。
-func Execute(exec func(clients []MQTT.Client, opts ExecOptions, param ...string) int, opts ExecOptions) {
+func Execute(exec func(clients []MQTT.Client, opts ExecOptions, param ...string) int64, opts ExecOptions) {
 	message := CreateFixedSizeMessage(opts.MessageSize)
 
 	// 配列を初期化
@@ -152,12 +153,12 @@ func Execute(exec func(clients []MQTT.Client, opts ExecOptions, param ...string)
 
 // 全クライアントに対して、publishの処理を行う。
 // 送信したメッセージ数を返す（原則、クライアント数分となる）。
-func PublishAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int {
+func PublishAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int64 {
 	message := param[0]
 
 	wg := new(sync.WaitGroup)
 
-	totalCount := 0
+	totalCount := int64(0)
 	for id := 0; id < len(clients); id++ {
 		wg.Add(1)
 
@@ -166,14 +167,14 @@ func PublishAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) 
 		go func(clientId int) {
 			defer wg.Done()
 
-			for index := 0; index < opts.Count; index++ {
+			for index := int64(0); index < opts.Count; index++ {
 				topic := fmt.Sprintf(opts.Topic+"/%d", clientId)
 
 				if Debug {
 					fmt.Printf("Publish : id=%d, count=%d, topic=%s\n", clientId, index, topic)
 				}
 				Publish(client, topic, opts.Qos, opts.Retain, message)
-				totalCount++
+				atomic.AddInt64(&totalCount, 1)
 
 				if opts.IntervalTime > 0 {
 					time.Sleep(time.Duration(opts.IntervalTime) * time.Millisecond)
@@ -199,7 +200,7 @@ func Publish(client MQTT.Client, topic string, qos byte, retain bool, message st
 // 全クライアントに対して、subscribeの処理を行う。
 // 指定されたカウント数分、メッセージを受信待ちする（メッセージが取得できない場合はカウントされない）。
 // この処理では、Publishし続けながら、Subscribeの処理を行う。
-func SubscribeAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int {
+func SubscribeAllClient(clients []MQTT.Client, opts ExecOptions, param ...string) int64 {
 	wg := new(sync.WaitGroup)
 
 	results := make([]*SubscribeResult, len(clients))
@@ -248,7 +249,7 @@ func SubscribeAllClient(clients []MQTT.Client, opts ExecOptions, param ...string
 	wg.Wait()
 
 	// 受信メッセージ数をカウント
-	totalCount := 0
+	totalCount := int64(0)
 	for id := 0; id < len(results); id++ {
 		totalCount += results[id].Count
 	}
@@ -258,7 +259,7 @@ func SubscribeAllClient(clients []MQTT.Client, opts ExecOptions, param ...string
 
 // Subscribeの処理結果
 type SubscribeResult struct {
-	Count int // 受信メッセージ数
+	Count int64 // 受信メッセージ数
 }
 
 // メッセージを受信する。
@@ -393,7 +394,7 @@ func main() {
 	password := flag.String("broker-password", "", "Password for connecting to the MQTT broker")
 	tls := flag.String("tls", "", "TLS mode. 'server:certFile' or 'client:rootCAFile,clientCertFile,clientKeyFile'")
 	clients := flag.Int("clients", 10, "Number of clients")
-	count := flag.Int("count", 100, "Number of loops per client")
+	count := flag.Int64("count", 100, "Number of loops per client")
 	size := flag.Int("size", 1024, "Message size per publish (byte)")
 	useDefaultHandler := flag.Bool("support-unknown-received", false, "Using default messageHandler for a message that does not match any known subscriptions")
 	preTime := flag.Int("pretime", 3000, "Pre wait time (ms)")
