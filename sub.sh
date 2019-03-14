@@ -1,3 +1,3 @@
-#/usr/bin/env bash
+#!/usr/bin/env bash
 
-./mqtt-bench -action s -broker tcp://127.0.0.1:5857 -broker-username product01:test -clients 1000 -count 100 -intervaltime 1000 -qos 1
+./mqtt-bench.lnx -action s -broker tcp://127.0.0.1:1883 -broker-username product01:test -broker-password test -clients 10000 -count 100 -intervaltime 1000 -qos 1
